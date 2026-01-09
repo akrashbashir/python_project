@@ -1,11 +1,27 @@
 # -*- coding: utf-8 -*-
-import tkinter as tk
-from tkinter import ttk
-from tkinter import messagebox, ttk
-from nltk import Tree
-from nltk.draw.util import CanvasFrame
-from nltk.draw import TreeWidget
 import re
+
+# Import nltk.Tree (doesn't require tkinter)
+try:
+    from nltk import Tree
+except ImportError:
+    Tree = None
+
+# Try to import tkinter and nltk.draw for GUI functionality (only if available)
+try:
+    import tkinter as tk
+    from tkinter import ttk, messagebox
+    from nltk.draw.util import CanvasFrame
+    from nltk.draw import TreeWidget
+    TKINTER_AVAILABLE = True
+except ImportError:
+    TKINTER_AVAILABLE = False
+    # Create dummy classes/functions for when tkinter is not available
+    tk = None
+    ttk = None
+    messagebox = None
+    CanvasFrame = None
+    TreeWidget = None
 
 # -------- Helpers --------
 def normalize_sentence(s: str) -> str:
@@ -17,8 +33,9 @@ def normalize_sentence(s: str) -> str:
 
 def show_table_popup(root, title: str, headers, rows, special_header_index=None):
     """Compact popup table: thin borders, selectable, full-table copyable (with headers)."""
-    import tkinter as tk
-    from tkinter import ttk
+    if not TKINTER_AVAILABLE:
+        raise ImportError("tkinter is not available. This function requires a GUI environment.")
+    # Use module-level tk and ttk imports
 
     # --- Popup setup ---
     top = tk.Toplevel(root)
@@ -691,6 +708,8 @@ XBAR_TREES = {
 def build_xbar_tree(tokens):
     if not tokens:
         tokens = ["—"]
+    if Tree is None:
+        raise ImportError("nltk.Tree is not available. This function requires nltk.")
     return Tree("TP", [
         Tree("DP", [tokens[0]]),
         Tree("T'", [
@@ -702,6 +721,8 @@ def build_xbar_tree(tokens):
 # -------- GUI --------
 class MewatiGUI:
     def __init__(self, master):
+        if not TKINTER_AVAILABLE:
+            raise ImportError("tkinter is not available. MewatiGUI requires a GUI environment.")
         self.root = master
         master.title("Mewati Language Model")
 
@@ -779,10 +800,10 @@ class MewatiGUI:
 
     def display_gloss(self):
         sent = self._get_input_sentence()
-        if sent not in LEIPZIG_ENTRIES:
+        if sent not in LEIPZIG_GLOSSING:
             messagebox.showerror("Not Found", f"No Leipzig glossing for:\n{sent}")
             return
-        entry = LEIPZIG_ENTRIES[sent]
+        entry = LEIPZIG_GLOSSING[sent]
 
         headers = ["Item", "Value", "Meaning"]
         rows = [
@@ -798,7 +819,40 @@ class MewatiGUI:
 
     def display_tree(self):
         sent = self._get_input_sentence()
-        tree = XBAR_TREES.get(sent, build_xbar_tree(sent.split()))
+        # Try lookup with normalized sentence first, then try with punctuation variants
+        tree_str = XBAR_TREES.get(sent)
+        if tree_str is None:
+            # Try with punctuation variants
+            for key in XBAR_TREES:
+                if normalize_sentence(key) == sent:
+                    tree_str = XBAR_TREES[key]
+                    break
+        
+        # Try to get or build a Tree object for visual display
+        tree_obj = None
+        if Tree is not None and CanvasFrame is not None and TreeWidget is not None:
+            if tree_str:
+                # Try to parse the string representation into an nltk.Tree object
+                try:
+                    # Remove punctuation and extra whitespace for parsing
+                    clean_tree_str = tree_str.replace("۔", "").replace("؟", "").strip()
+                    tree_obj = Tree.fromstring(clean_tree_str)
+                except:
+                    # If parsing fails, try building a simple tree
+                    try:
+                        tree_obj = build_xbar_tree(sent.split())
+                    except:
+                        pass
+            else:
+                # Build a tree from the sentence tokens
+                try:
+                    tree_obj = build_xbar_tree(sent.split())
+                except:
+                    pass
+        
+        # If no tree object, use default string representation
+        if not tree_str:
+            tree_str = f"[TP [DP [{sent}]] [T' [T …] [VP …]]]"
 
         top = tk.Toplevel(self.root)
         top.title("X-Bar Syntax Tree")
@@ -814,17 +868,36 @@ class MewatiGUI:
         )
         lbl.pack(fill="x")
 
-        cf = CanvasFrame(top, width=300, height=250, closeenough=2)
-        t = TreeWidget(cf.canvas(), tree)
-        cf.add_widget(t, 30, 30)
-        cf.pack(expand=True, fill="both")
-        top.protocol("WM_DELETE_WINDOW", cf.destroy)
+        if tree_obj is not None:
+            # Display visual tree using nltk.draw
+            try:
+                cf = CanvasFrame(top, width=400, height=400, closeenough=2)
+                t = TreeWidget(cf.canvas(), tree_obj)
+                cf.add_widget(t, 30, 30)
+                cf.pack(expand=True, fill="both")
+                top.protocol("WM_DELETE_WINDOW", cf.destroy)
+            except Exception as e:
+                # Fallback to text display if visual tree fails
+                text_widget = tk.Text(top, wrap=tk.WORD, font=("Courier", 10))
+                text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+                text_widget.insert("1.0", tree_str)
+                text_widget.config(state=tk.DISABLED)
+        else:
+            # Display as text if visual tree components not available
+            text_widget = tk.Text(top, wrap=tk.WORD, font=("Courier", 10))
+            text_widget.pack(fill="both", expand=True, padx=10, pady=10)
+            text_widget.insert("1.0", tree_str)
+            text_widget.config(state=tk.DISABLED)
 
     def clear_input(self):
         self.text_entry.delete(0, tk.END)
 
 # -------- Main --------
 if __name__ == "__main__":
+    if not TKINTER_AVAILABLE:
+        print("Error: tkinter is not available. Cannot run GUI application.")
+        print("This application requires a GUI environment with tkinter installed.")
+        exit(1)
     root = tk.Tk()
     gui = MewatiGUI(root)
     root.mainloop()
